@@ -11,46 +11,22 @@ on:
 permissions:
   contents: write
 
-concurrency:
-  group: release-${{ inputs.version }}
-  cancel-in-progress: false
-
 env:
   BINARY: cf-tunnel-manager
 
 jobs:
   prepare:
-    name: Validate / overwrite same-version tag
     runs-on: ubuntu-latest
     outputs:
       tag: ${{ steps.meta.outputs.tag }}
-      version: ${{ steps.meta.outputs.version }}
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-      - name: Validate and normalize version
-        id: meta
-        run: |
-          set -euo pipefail
-          raw='${{ inputs.version }}'
-          ver="${raw#v}"
-          if [[ ! "$ver" =~ ^[0-9]+\.[0-9]+(\.[0-9]+)?$ ]]; then
-            echo "::error::版本号格式错误: $raw"
-            exit 1
-          fi
-          tag="v${ver}"
-          echo "version=$ver" >> "$GITHUB_OUTPUT"
-          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+      - uses: actions/checkout@v4
+      - id: meta
+        run: ver="${{ inputs.version }}"; ver="${ver#v}"; echo "tag=v${ver}" >> "$GITHUB_OUTPUT"; echo "version=${ver}" >> "$GITHUB_OUTPUT"
       - name: Overwrite old release and tag
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          TAG: ${{ steps.meta.outputs.tag }}
-        run: |
-          set -euo pipefail
-          gh release delete "$TAG" --yes || true
-          git push origin --delete "refs/tags/$TAG" || true
-          git tag -f "$TAG"
-          git push -f origin "refs/tags/$TAG"
+        run: gh release delete "${{ steps.meta.outputs.tag }}" --yes || true; git push origin --delete "refs/tags/${{ steps.meta.outputs.tag }}" || true; git tag -f "${{ steps.meta.outputs.tag }}"; git push -f origin "refs/tags/${{ steps.meta.outputs.tag }}"
 
   build:
     needs: prepare
@@ -78,11 +54,7 @@ jobs:
           GOOS: ${{ matrix.goos }}
           GOARCH: ${{ matrix.goarch }}
           CGO_ENABLED: 0
-          TAG: ${{ needs.prepare.outputs.tag }}
-        run: |
-          set -euo pipefail
-          mkdir -p dist
-          go build -trimpath -ldflags="-s -w -X main.Version=${TAG}" -o "dist/${BINARY}-${{ matrix.suffix }}" .
+        run: mkdir -p dist && go build -trimpath -ldflags="-s -w" -o "dist/${BINARY}-${{ matrix.suffix }}" .
       - uses: actions/upload-artifact@v4
         with:
           name: dist-${{ matrix.suffix }}
@@ -98,9 +70,7 @@ jobs:
           path: dist
           merge-multiple: true
       - name: Generate checksums
-        run: |
-          cd dist
-          sha256sum cf-tunnel-manager-* > checksums.txt
+        run: cd dist && sha256sum cf-tunnel-manager-* > checksums.txt
       - name: Create/overwrite GitHub Release
         uses: softprops/action-gh-release@v2
         with:
@@ -109,241 +79,3 @@ jobs:
           files: |
             dist/cf-tunnel-manager-*
             dist/checksums.txt
-          make_latest: true          tag_name: ${{ needs.prepare.outputs.tag }}
-          name: ${{ env.BINARY }} ${{ needs.prepare.outputs.tag }}
-          body: |
-            手动发布版本 `${{ needs.prepare.outputs.tag }}`。
-
-            Android/Termux 使用示例：
-            ```bash
-            chmod +x cf-tunnel-manager-android-arm64
-            ./cf-tunnel-manager-android-arm64
-            ```
-          files: |
-            dist/cf-tunnel-manager-*
-            dist/checksums.txt
-          make_latest: true
-          fail_on_unmatched_files: true          mkdir -p dist
-          go build -trimpath -ldflags="-s -w -X main.Version=${TAG}" -o "dist/${BINARY}-${{ matrix.suffix }}" .
-
-      - name: Upload artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: dist-${{ matrix.suffix }}
-          path: dist/*
-          if-no-files-found: error
-          retention-days: 1
-
-  release:
-    name: Publish release
-    needs: [prepare, build]
-    runs-on: ubuntu-latest
-    steps:
-      - name: Download artifacts
-        uses: actions/download-artifact@v4
-        with:
-          pattern: dist-*
-          path: dist
-          merge-multiple: true
-
-      - name: Generate checksums
-        run: |
-          set -euo pipefail
-          cd dist
-          sha256sum "${BINARY}"-* > checksums.txt
-
-      - name: Create/overwrite GitHub Release
-        uses: softprops/action-gh-release@v2
-        with:
-          tag_name: ${{ needs.prepare.outputs.tag }}
-          name: ${{ env.BINARY }} ${{ needs.prepare.outputs.tag }}
-          body: |
-            手动发布版本 `${{ needs.prepare.outputs.tag }}`。
-
-            Android/Termux 使用示例：
-            ```bash
-            chmod +x cf-tunnel-manager-android-arm64
-            ./cf-tunnel-manager-android-arm64
-            ```
-          files: |
-            dist/cf-tunnel-manager-*
-            dist/checksums.txt
-          make_latest: true
-          fail_on_unmatched_files: true          go-version-file: go.mod
-          cache: true
-
-      - name: Build
-        env:
-          GOOS: ${{ matrix.goos }}
-          GOARCH: ${{ matrix.goarch }}
-          GOARM: ${{ matrix.goarm }}
-          CGO_ENABLED: 0
-          TAG: ${{ needs.prepare.outputs.tag }}
-        run: |
-          set -euo pipefail
-          mkdir -p dist
-          go build -trimpath -ldflags="-s -w -X main.Version=${TAG}" -o "dist/${BINARY}-${{ matrix.suffix }}" .
-
-      - name: Upload artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: dist-${{ matrix.suffix }}
-          path: dist/*
-          if-no-files-found: error
-          retention-days: 1
-
-  release:
-    name: Publish release
-    needs: [prepare, build]
-    runs-on: ubuntu-latest
-    steps:
-      - name: Download artifacts
-        uses: actions/download-artifact@v4
-        with:
-          pattern: dist-*
-          path: dist
-          merge-multiple: true
-
-      - name: Generate checksums
-        run: |
-          set -euo pipefail
-          cd dist
-          sha256sum "${BINARY}"-* > checksums.txt
-
-      - name: Create/overwrite GitHub Release
-        uses: softprops/action-gh-release@v2
-        with:
-          tag_name: ${{ needs.prepare.outputs.tag }}
-          name: ${{ env.BINARY }} ${{ needs.prepare.outputs.tag }}
-          body: |
-            手动发布版本 `${{ needs.prepare.outputs.tag }}`。
-
-            Android/Termux 使用示例：
-            ```bash
-            chmod +x cf-tunnel-manager-android-arm64
-            ./cf-tunnel-manager-android-arm64
-            ```
-          files: |
-            dist/cf-tunnel-manager-*
-            dist/checksums.txt
-          make_latest: true
-          fail_on_unmatched_files: true        with:
-          go-version-file: go.mod
-          cache: true
-
-      - name: Build
-        env:
-          GOOS: ${{ matrix.goos }}
-          GOARCH: ${{ matrix.goarch }}
-          GOARM: ${{ matrix.goarm }}
-          CGO_ENABLED: 0
-          TAG: ${{ needs.prepare.outputs.tag }}
-        run: |
-          set -euo pipefail
-          mkdir -p dist
-          go build -trimpath -ldflags="-s -w -X main.Version=${TAG}" -o "dist/${BINARY}-${{ matrix.suffix }}" .
-
-      - name: Upload artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: dist-${{ matrix.suffix }}
-          path: dist/*
-          if-no-files-found: error
-          retention-days: 1
-
-  release:
-    name: Publish release
-    needs: [prepare, build]
-    runs-on: ubuntu-latest
-    steps:
-      - name: Download artifacts
-        uses: actions/download-artifact@v4
-        with:
-          pattern: dist-*
-          path: dist
-          merge-multiple: true
-
-      - name: Generate checksums
-        run: |
-          set -euo pipefail
-          cd dist
-          sha256sum "${BINARY}"-* > checksums.txt
-
-      - name: Create/overwrite GitHub Release
-        uses: softprops/action-gh-release@v2
-        with:
-          tag_name: ${{ needs.prepare.outputs.tag }}
-          name: ${{ env.BINARY }} ${{ needs.prepare.outputs.tag }}
-          body: |
-            手动发布版本 `${{ needs.prepare.outputs.tag }}`。
-
-            Android/Termux 使用示例：
-            ```bash
-            chmod +x cf-tunnel-manager-android-arm64
-            ./cf-tunnel-manager-android-arm64
-            ```
-          files: |
-            dist/cf-tunnel-manager-*
-            dist/checksums.txt
-          make_latest: true
-          fail_on_unmatched_files: true        uses: actions/setup-go@v5
-        with:
-          go-version-file: go.mod
-          cache: true
-
-      - name: Build
-        env:
-          GOOS: ${{ matrix.goos }}
-          GOARCH: ${{ matrix.goarch }}
-          GOARM: ${{ matrix.goarm }}
-          CGO_ENABLED: 0
-          TAG: ${{ needs.prepare.outputs.tag }}
-        run: |
-          set -euo pipefail
-          mkdir -p dist
-          go build -trimpath -ldflags="-s -w -X main.Version=${TAG}" -o "dist/${BINARY}-${{ matrix.suffix }}" .
-
-      - name: Upload artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: dist-${{ matrix.suffix }}
-          path: dist/*
-          if-no-files-found: error
-          retention-days: 1
-
-  release:
-    name: Publish release
-    needs: [prepare, build]
-    runs-on: ubuntu-latest
-    steps:
-      - name: Download artifacts
-        uses: actions/download-artifact@v4
-        with:
-          pattern: dist-*
-          path: dist
-          merge-multiple: true
-
-      - name: Generate checksums
-        run: |
-          set -euo pipefail
-          cd dist
-          sha256sum "${BINARY}"-* > checksums.txt
-
-      - name: Create/overwrite GitHub Release
-        uses: softprops/action-gh-release@v2
-        with:
-          tag_name: ${{ needs.prepare.outputs.tag }}
-          name: ${{ env.BINARY }} ${{ needs.prepare.outputs.tag }}
-          body: |
-            手动发布版本 `${{ needs.prepare.outputs.tag }}`。
-
-            Android/Termux 使用示例：
-            ```bash
-            chmod +x cf-tunnel-manager-android-arm64
-            ./cf-tunnel-manager-android-arm64
-            ```
-          files: |
-            dist/cf-tunnel-manager-*
-            dist/checksums.txt
-          make_latest: true
-          fail_on_unmatched_files: true
