@@ -1,7 +1,6 @@
 name: Release cf-tunnel-manager
 
 on:
-  # 只允许手动输入版本号触发；不支持 push tag 自动触发
   workflow_dispatch:
     inputs:
       version:
@@ -51,7 +50,6 @@ jobs:
           TAG: ${{ steps.meta.outputs.tag }}
         run: |
           set -euo pipefail
-          # 先删 release，再删 tag；不存在时忽略错误，实现同版本号覆盖
           gh release delete "$TAG" --yes || true
           git push origin --delete "refs/tags/$TAG" || true
           git tag -f "$TAG"
@@ -65,22 +63,12 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          # Android / Termux，无 root 可用
           - { goos: android, goarch: arm64, suffix: android-arm64 }
-
-          # Linux：x86(386)、AMD64、ARMv7、ARM64
-          - { goos: linux, goarch: 386, suffix: linux-x86 }
           - { goos: linux, goarch: amd64, suffix: linux-amd64 }
-          - { goos: linux, goarch: arm, goarm: 7, suffix: linux-armv7 }
           - { goos: linux, goarch: arm64, suffix: linux-arm64 }
-
-          # macOS：Intel 与 Apple Silicon
           - { goos: darwin, goarch: amd64, suffix: darwin-amd64 }
           - { goos: darwin, goarch: arm64, suffix: darwin-arm64 }
-
-          # Windows：x64 与 ARM64
           - { goos: windows, goarch: amd64, suffix: windows-amd64.exe }
-          - { goos: windows, goarch: arm64, suffix: windows-arm64.exe }
     steps:
       - name: Checkout tag
         uses: actions/checkout@v4
@@ -91,6 +79,64 @@ jobs:
         uses: actions/setup-go@v5
         with:
           go-version-file: go.mod
+          cache: true
+
+      - name: Build
+        env:
+          GOOS: ${{ matrix.goos }}
+          GOARCH: ${{ matrix.goarch }}
+          GOARM: ${{ matrix.goarm }}
+          CGO_ENABLED: 0
+          TAG: ${{ needs.prepare.outputs.tag }}
+        run: |
+          set -euo pipefail
+          mkdir -p dist
+          go build -trimpath -ldflags="-s -w -X main.Version=${TAG}" -o "dist/${BINARY}-${{ matrix.suffix }}" .
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: dist-${{ matrix.suffix }}
+          path: dist/*
+          if-no-files-found: error
+          retention-days: 1
+
+  release:
+    name: Publish release
+    needs: [prepare, build]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download artifacts
+        uses: actions/download-artifact@v4
+        with:
+          pattern: dist-*
+          path: dist
+          merge-multiple: true
+
+      - name: Generate checksums
+        run: |
+          set -euo pipefail
+          cd dist
+          sha256sum "${BINARY}"-* > checksums.txt
+
+      - name: Create/overwrite GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ needs.prepare.outputs.tag }}
+          name: ${{ env.BINARY }} ${{ needs.prepare.outputs.tag }}
+          body: |
+            手动发布版本 `${{ needs.prepare.outputs.tag }}`。
+
+            Android/Termux 使用示例：
+            ```bash
+            chmod +x cf-tunnel-manager-android-arm64
+            ./cf-tunnel-manager-android-arm64
+            ```
+          files: |
+            dist/cf-tunnel-manager-*
+            dist/checksums.txt
+          make_latest: true
+          fail_on_unmatched_files: true          go-version-file: go.mod
           cache: true
 
       - name: Build
