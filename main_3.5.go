@@ -49,7 +49,8 @@ const (
 )
 
 // 全局版本号定义
-const Version = "v3.5"
+var Version = "v3.5"
+
 
 // randomColor 返回随机 ANSI 颜色代码，用于标题框边框渲染
 func randomColor() string {
